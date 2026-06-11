@@ -95,37 +95,36 @@ struct GuideReference {
 mod epub {
     use super::Epub;
     use crate::common::common::File;
-    use color_eyre::eyre::Ok;
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::io::Read;
     use std::path::Path;
     use zip::ZipArchive;
 
     impl File<Epub> for Epub {
-        fn unzip(&self, path: &Path) -> Vec<String> {
-            let zip_file = std::fs::File::open(path).unwrap();
-            let mut archive = ZipArchive::new(&zip_file).unwrap();
-            let mut files: Vec<String> = Vec::new();
-            for i in 0..archive.len() {
-                let mut file = archive.by_index(i).unwrap();
-                if file.is_dir() {
-                    continue;
-                }
-                let mut content = String::new();
-                // match fil.read_to_string(&mut content) {
-                //     std::result::Result::Ok(_) => files.push(content),
-                //     std::result::Result::Err(_) => {
-                //         continue;
-                //     }
-                // }
-                files.push(file.name().to_string());
-            }
-            return files;
+        fn unzip(&self, path: &Path) -> Epub {
+            let files_map = import_data(path);
         }
 
         fn merge(&self, data: RefCell<Option<Epub>>) {
             todo!()
         }
+    }
+
+    fn import_data(path: &Path) -> HashMap<String, String> {
+        let zip_file = std::fs::File::open(path).unwrap();
+        let mut archive = ZipArchive::new(zip_file).unwrap();
+        let mut files_map = HashMap::<String, String>::new();
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).unwrap();
+            if file.is_dir() {
+                continue;
+            }
+            let mut content = String::with_capacity(file.size() as usize);
+            file.read_to_string(&mut content);
+            files_map.insert(file.name().to_string(), content);
+        }
+        files_map
     }
 }
 
