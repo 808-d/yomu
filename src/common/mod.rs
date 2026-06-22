@@ -4,6 +4,6 @@ pub mod common {
 
     use crate::Epub;
     pub trait File<T> {
-        fn unzip(&self, path: &Path) -> Epub;
+        fn unzip(&self, path: &Path) -> ();
     }
 }

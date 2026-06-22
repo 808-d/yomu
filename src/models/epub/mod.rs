@@ -154,11 +154,24 @@ struct Content {
     #[serde(rename = "@src")]
     src: String,
 }
+
+enum tags {
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    a,
+    b,
+}
 mod epub {
     use crate::common::common::File;
     use crate::epub::Epub;
     use crate::epub::Toc;
     use crate::models::epub::NavMap;
+    use scraper::Html;
+    use scraper::Selector;
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::io::Read;
@@ -166,12 +179,16 @@ mod epub {
     use std::rc::Rc;
     use zip::ZipArchive;
     impl File<Epub> for Epub {
-        fn unzip(&self, path: &Path) -> Epub {
+        fn unzip(&self, path: &Path) -> () {
             let mut files_map = import_data(path);
             let toc_ncx = files_map.get_mut("toc.ncx").expect("toc.ncx not found!");
             let nav_map = define_structure(toc_ncx);
-            let file_content = merge(nav_map, files_map);
-            todo!()
+            let raw_content = merge(files_map);
+            let extracted_content = remove_tags(raw_content);
+
+            for line in &extracted_content {
+                println!("{line}")
+            }
         }
     }
 
@@ -184,6 +201,7 @@ mod epub {
         let mut files_map = HashMap::<String, String>::new();
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).unwrap();
+            // check if its directory, or its a css file
             if file.is_dir() {
                 continue;
             }
@@ -199,7 +217,30 @@ mod epub {
         Ok(table_of_content.nav_map)
     }
 
-    fn merge(nav_map: NavMap, files_map: HashMap<String, String>) -> Rc<RefCell<String>> {
-        todo!()
+    fn merge(files_map: HashMap<String, String>) -> Rc<RefCell<String>> {
+        let total = files_map.values().map(|v| v.len()).sum();
+        let mut content = String::with_capacity(total);
+        for v in files_map.into_values() {
+            content.push_str(&v);
+        }
+
+        Rc::new(RefCell::new(content))
+    }
+
+    /*
+     * Remove html tags
+     */
+    fn remove_tags(raw_content: Rc<RefCell<String>>) -> Vec<String> {
+        let mut lines = Vec::<String>::new();
+        let document = Html::parse_document(&raw_content.borrow());
+        let selector = Selector::parse("h1, h2, h3, h4, h5, h6, p, b, img").unwrap();
+
+        for node in document.select(&selector) {
+            let text = node.text().collect::<String>().trim().to_string();
+            if !text.is_empty() {
+                lines.push(text);
+            }
+        }
+        lines
     }
 }

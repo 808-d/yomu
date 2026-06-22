@@ -2,8 +2,7 @@ use crate::common::common::File;
 use crate::epub::Epub;
 use crate::{app::App, models::epub};
 use clap::Parser;
-use crossterm::terminal;
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{DefaultTerminal, Frame};
 use std::path::Path;
 mod app;
 pub mod common;
@@ -13,13 +12,24 @@ struct Cli {
     file: String,
 }
 
-fn main() {
-    let path = Path::new(
-        "/home/duc/Documents/クールな女神様と一緒に住んだら、甘やかしすぎてポンコツにしてしまった件について1 (HJ文庫).epub",
-    );
+fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+    ratatui::run(app)?;
+    Ok(())
+}
 
+fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    loop {
+        terminal.draw(render)?;
+        if crossterm::event::read()?.is_key_press() {
+            break Ok(());
+        }
+    }
+}
+
+fn render(frame: &mut Frame) {
+    let path = Path::new("/home/duc/Documents/epubs/また同じ夢を見ていた - 住野よる.epub");
     let epub_file: Epub = Epub::default();
     let result = epub_file.unzip(path);
-    println!("exists: {}", path.exists());
-    println!("result: {:#?}", result);
+    frame.render_widget(result, frame.area());
 }
