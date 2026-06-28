@@ -1,96 +1,4 @@
 use serde::Deserialize;
-
-/*
- * Epub model
- * */
-#[derive(Default, Debug)]
-pub struct Epub {
-    xml: XmlDeclaration,
-    package: Package,
-}
-
-#[derive(Default, Debug)]
-struct XmlDeclaration {
-    version: String,
-    encoding: String,
-}
-
-#[derive(Default, Debug)]
-struct Package {
-    version: String,
-    unique_identifier: String,
-    metadata: Metadata,
-    manifest: Manifest,
-    spine: Spine,
-    guides: Guides,
-}
-
-#[derive(Default, Debug)]
-struct Metadata {
-    language: String,
-    title: String,
-    creator: Creator,
-    contributor: Contributor,
-    identifier: Vec<Identifier>,
-    dc_date: String,
-    metas: Metas,
-}
-
-#[derive(Default, Debug)]
-struct Creator {
-    text: String,
-    file_as: String,
-    role: String,
-}
-
-#[derive(Default, Debug)]
-struct Contributor {
-    text: String,
-    role: String,
-}
-
-#[derive(Default, Debug)]
-struct Identifier {
-    text: String,
-    id: Option<String>,
-    scheme: String,
-}
-
-#[derive(Default, Debug)]
-struct Metas {
-    meta: String,
-}
-
-#[derive(Default, Debug)]
-struct Manifest {
-    item: Vec<ManifestItem>,
-}
-
-#[derive(Default, Debug)]
-struct ManifestItem {
-    id: String,
-    href: String,
-    media_type: String,
-}
-
-#[derive(Default, Debug)]
-struct Spine {
-    itemref: Vec<SpineItemRef>,
-    toc: String,
-}
-
-#[derive(Default, Debug)]
-struct SpineItemRef {
-    idref: String,
-}
-
-#[derive(Default, Debug)]
-struct Guides {
-    guide_type: String,
-    title: String,
-    href: String,
-}
-
 /*
  * table contet
  * */
@@ -125,13 +33,13 @@ struct DocTitle {
     text: String,
 }
 
-#[derive(Deserialize)]
-struct NavMap {
+#[derive(Deserialize, Debug)]
+pub struct NavMap {
     #[serde(rename = "navPoint")]
     nav_points: Vec<NavPoint>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct NavPoint {
     #[serde(rename = "@id")]
     id: String,
@@ -143,23 +51,21 @@ struct NavPoint {
     content: Content,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct NavLabel {
     #[serde(rename = "text")]
     text: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Content {
     #[serde(rename = "@src")]
     src: String,
 }
 
-mod epub {
-    use crate::common::common::File;
-    use crate::epub::Epub;
+pub mod epub {
+    use crate::epub::NavMap;
     use crate::epub::Toc;
-    use crate::models::epub::NavMap;
     use scraper::Html;
     use scraper::Selector;
     use std::cell::RefCell;
@@ -168,16 +74,14 @@ mod epub {
     use std::path::Path;
     use std::rc::Rc;
     use zip::ZipArchive;
-    impl File<Epub> for Epub {
-        fn unzip(&self, path: &Path) -> Vec<String> {
-            let mut files_map = import_data(path);
-            let toc_ncx = files_map.get_mut("toc.ncx").expect("toc.ncx not found!");
-            let nav_map = define_structure(toc_ncx);
-            let raw_content = merge(files_map);
-            let extracted_content = remove_tags(raw_content);
 
-            extracted_content
-        }
+    pub fn load(path: &Path) -> () {
+        let mut files_map = import_data(path);
+        let toc_ncx = files_map.get_mut("toc.ncx").expect("toc.ncx not found!");
+        let nav_map = define_structure(toc_ncx).expect("nav map not found!");
+        let extracted_content = merge(nav_map, files_map);
+
+        print!("{:#?}", extracted_content);
     }
 
     /*
@@ -205,22 +109,33 @@ mod epub {
         Ok(table_of_content.nav_map)
     }
 
-    fn merge(files_map: HashMap<String, String>) -> Rc<RefCell<String>> {
+    /*
+       merge content with chapter
+       */
+    fn merge(
+        table_of_content: NavMap,
+        files_map: HashMap<String, String>,
+    ) -> Rc<RefCell<HashMap<String, String>>> {
+        let mut result = HashMap::<String, String>::new();
         let total = files_map.values().map(|v| v.len()).sum();
-        let mut content = String::with_capacity(total);
-        for k in files_map.values() {
-            content.push_str(k);
-        }
+        let content = String::with_capacity(total);
 
-        Rc::new(RefCell::new(content))
+        for k in table_of_content.nav_points {
+            let chapter = &k.content.src;
+            let file_content = files_map.get(chapter).expect("Error when finding content");
+            let cleaned = remove_tags(file_content);
+            result.insert(chapter.to_string(), cleaned);
+        }
+        Rc::new(RefCell::new(result))
     }
 
     /*
-     * Remove html tags
-     */
-    fn remove_tags(raw_content: Rc<RefCell<String>>) -> Vec<String> {
-        let mut lines = Vec::<String>::new();
-        let document = Html::parse_document(&raw_content.borrow());
+       remove html tags
+       */
+    fn remove_tags(raw_content: &str) -> String {
+        println!("{}", raw_content);
+        let mut lines = String::new();
+        let document = Html::parse_document(&raw_content);
         let body_selector = Selector::parse("body").unwrap();
         let p_selector = Selector::parse("p").unwrap();
 
@@ -228,10 +143,11 @@ mod epub {
             for el in body.select(&p_selector) {
                 let text = el.text().collect::<String>().trim().to_string();
                 if !text.is_empty() {
-                    lines.push(text);
+                    lines.push_str(&text);
                 }
             }
         }
+
         lines
     }
 }

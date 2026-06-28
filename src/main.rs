@@ -1,13 +1,12 @@
-use crate::common::common::File;
-use crate::epub::Epub;
-use crate::{app::App, models::epub};
+use crate::app::App;
 use clap::Parser;
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame};
 use std::path::Path;
 mod app;
-pub mod common;
-mod models;
+mod epub;
+mod keys;
+use keys::Key;
 #[derive(Parser)]
 struct Cli {
     file: String,
@@ -23,7 +22,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     loop {
         terminal.draw(render)?;
         if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-            if key.code == crossterm::event::KeyCode::Char('q') {
+            if key.code == crossterm::event::KeyCode::Char(Key::Quit.char()) {
                 break Ok(());
             }
         }
@@ -32,8 +31,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 
 fn render(frame: &mut Frame) {
     let path = Path::new("/home/duc/Documents/epubs/また同じ夢を見ていた - 住野よる.epub");
-    let epub_file: Epub = Epub::default();
-    let result = epub_file.unzip(path);
+    let result = crate::epub::epub::load(path);
 
     let debug_text = format!("{:#?}", result);
     frame.render_widget(Paragraph::new(debug_text), frame.area());
