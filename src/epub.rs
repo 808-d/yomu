@@ -3,7 +3,7 @@ use serde::Deserialize;
  * table contet
  * */
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Toc {
     #[serde(rename = "head")]
     head: Head,
@@ -13,13 +13,13 @@ struct Toc {
     nav_map: NavMap,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Head {
     #[serde(rename = "meta")]
     meta: Vec<Meta>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Meta {
     #[serde(rename = "@content")]
     content: String,
@@ -27,7 +27,7 @@ struct Meta {
     name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct DocTitle {
     #[serde(rename = "text")]
     text: String,
@@ -63,8 +63,45 @@ struct Content {
     src: String,
 }
 
+/* content.opf */
+#[derive(Deserialize, Debug)]
+struct Package {
+    manifest: Manifest,
+    spine: Spine,
+}
+
+#[derive(Deserialize, Debug)]
+struct Manifest {
+    #[serde(rename = "item")]
+    items: Vec<ManifestItem>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ManifestItem {
+    #[serde(rename = "@id")]
+    id: String,
+    #[serde(rename = "@href")]
+    href: String,
+    #[serde(rename = "@media-type")]
+    media_type: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct Spine {
+    #[serde(rename = "itemref")]
+    items: Vec<ItemRef>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ItemRef {
+    #[serde(rename = "@idref")]
+    idref: String,
+}
 pub mod epub {
+    use crate::epub::Manifest;
+    use crate::epub::ManifestItem;
     use crate::epub::NavMap;
+    use crate::epub::Package;
     use crate::epub::Toc;
     use scraper::Html;
     use scraper::Selector;
@@ -76,18 +113,26 @@ pub mod epub {
     use zip::ZipArchive;
 
     pub fn load(path: &Path) -> () {
-        let mut files_map = import_data(path);
-        let toc_ncx = files_map.get_mut("toc.ncx").expect("toc.ncx not found!");
+        let files_map = import_data(path);
+        let toc_ncx = files_map.get("toc.ncx").expect("toc.ncx not found");
+        let content_opf = files_map.get("content.opf").expect("content.opf not found");
         let nav_map = define_structure(toc_ncx).expect("nav map not found!");
-        let extracted_content = merge(nav_map, files_map);
+        // some time toc.ncx does not sync with content.opf
+        let chapters = define_chapters(content_opf).expect("chapters not found!");
+        let extracted_content = merge(nav_map, chapters, &files_map);
 
         print!("{:#?}", extracted_content);
+    }
+
+    fn define_chapters(content_opf: &str) -> Result<Vec<ManifestItem>, quick_xml::DeError> {
+        let package: Package = quick_xml::de::from_str(content_opf)?;
+        Ok(package.manifest.items)
     }
 
     /*
      * Import the epub content into object
      */
-    fn import_data(path: &Path) -> HashMap<String, String> {
+    fn import_data(path: &Path) -> Rc<HashMap<String, String>> {
         let zip_file = std::fs::File::open(path).unwrap();
         let mut archive = ZipArchive::new(zip_file).unwrap();
         let mut files_map = HashMap::<String, String>::new();
@@ -101,11 +146,11 @@ pub mod epub {
             let _ = file.read_to_string(&mut content);
             files_map.insert(file.name().to_string(), content);
         }
-        files_map
+        Rc::new(files_map)
     }
 
-    fn define_structure(content: &str) -> Result<NavMap, quick_xml::DeError> {
-        let table_of_content: Toc = quick_xml::de::from_str(content)?;
+    fn define_structure(toc: &str) -> Result<NavMap, quick_xml::DeError> {
+        let table_of_content: Toc = quick_xml::de::from_str(toc)?;
         Ok(table_of_content.nav_map)
     }
 
@@ -114,17 +159,32 @@ pub mod epub {
        */
     fn merge(
         table_of_content: NavMap,
-        files_map: HashMap<String, String>,
+        chapters: Vec<ManifestItem>,
+        files_map: &HashMap<String, String>,
     ) -> Rc<RefCell<HashMap<String, String>>> {
         let mut result = HashMap::<String, String>::new();
         let total = files_map.values().map(|v| v.len()).sum();
         let content = String::with_capacity(total);
-
-        for k in table_of_content.nav_points {
-            let chapter = &k.content.src;
-            let file_content = files_map.get(chapter).expect("Error when finding content");
-            let cleaned = remove_tags(file_content);
-            result.insert(chapter.to_string(), cleaned);
+        let is_equal = chapters.len() == table_of_content.nav_points.len();
+        /* if table_of_content length equals to chapters then key and value are both from chapters
+           if not then take key from table of content and value from chapters
+           */
+        if !is_equal {
+            for chapter in chapters {
+                let chapter_file = &chapter.href;
+                let file_content = files_map
+                    .get(chapter_file)
+                    .expect("Error when finding content");
+                let cleaned = remove_tags(file_content);
+                result.insert(chapter_file.to_string(), cleaned);
+            }
+        } else {
+            for nav_point in table_of_content.nav_points {
+                let chapter = &nav_point.content.src;
+                let file_content = files_map.get(chapter).expect("Error when finding content");
+                let cleaned = remove_tags(file_content);
+                result.insert(nav_point.nav_label.text, cleaned);
+            }
         }
         Rc::new(RefCell::new(result))
     }
@@ -147,7 +207,6 @@ pub mod epub {
                 }
             }
         }
-
         lines
     }
 }
