@@ -105,14 +105,12 @@ pub mod epub {
     use crate::epub::Toc;
     use scraper::Html;
     use scraper::Selector;
-    use std::cell::RefCell;
     use std::collections::HashMap;
     use std::io::Read;
     use std::path::Path;
-    use std::rc::Rc;
     use zip::ZipArchive;
 
-    pub fn load(path: &Path) -> () {
+    pub fn load(path: &Path) -> HashMap<String, String> {
         let files_map = import_data(path);
         let toc_ncx = files_map.get("toc.ncx").expect("toc.ncx not found");
         let content_opf = files_map.get("content.opf").expect("content.opf not found");
@@ -120,8 +118,7 @@ pub mod epub {
         // some time toc.ncx does not sync with content.opf
         let chapters = define_chapters(content_opf).expect("chapters not found!");
         let extracted_content = merge(nav_map, chapters, &files_map);
-
-        print!("{:#?}", extracted_content);
+        return extracted_content;
     }
 
     fn define_chapters(content_opf: &str) -> Result<Vec<ManifestItem>, quick_xml::DeError> {
@@ -132,7 +129,7 @@ pub mod epub {
     /*
      * Import the epub content into object
      */
-    fn import_data(path: &Path) -> Rc<HashMap<String, String>> {
+    fn import_data(path: &Path) -> HashMap<String, String> {
         let zip_file = std::fs::File::open(path).unwrap();
         let mut archive = ZipArchive::new(zip_file).unwrap();
         let mut files_map = HashMap::<String, String>::new();
@@ -146,7 +143,7 @@ pub mod epub {
             let _ = file.read_to_string(&mut content);
             files_map.insert(file.name().to_string(), content);
         }
-        Rc::new(files_map)
+        files_map
     }
 
     fn define_structure(toc: &str) -> Result<NavMap, quick_xml::DeError> {
@@ -161,23 +158,29 @@ pub mod epub {
         table_of_content: NavMap,
         chapters: Vec<ManifestItem>,
         files_map: &HashMap<String, String>,
-    ) -> Rc<RefCell<HashMap<String, String>>> {
+    ) -> HashMap<String, String> {
         let mut result = HashMap::<String, String>::new();
-        let total = files_map.values().map(|v| v.len()).sum();
-        let content = String::with_capacity(total);
         let is_equal = chapters.len() == table_of_content.nav_points.len();
         /* if table_of_content length equals to chapters then key and value are both from chapters
            if not then take key from table of content and value from chapters
            */
         if !is_equal {
+            let mut redundant = String::new();
+            for nav_point in table_of_content.nav_points {
+                let chapter = &nav_point.content.src;
+                let file_content = files_map.get(chapter).expect("Error when finding content");
+                let cleaned = remove_tags(file_content);
+                result.insert(nav_point.nav_label.text, cleaned);
+            }
             for chapter in chapters {
                 let chapter_file = &chapter.href;
                 let file_content = files_map
                     .get(chapter_file)
                     .expect("Error when finding content");
                 let cleaned = remove_tags(file_content);
-                result.insert(chapter_file.to_string(), cleaned);
+                redundant.push_str(&cleaned);
             }
+            result.insert("...".to_string(), redundant);
         } else {
             for nav_point in table_of_content.nav_points {
                 let chapter = &nav_point.content.src;
@@ -186,16 +189,15 @@ pub mod epub {
                 result.insert(nav_point.nav_label.text, cleaned);
             }
         }
-        Rc::new(RefCell::new(result))
+        result
     }
 
     /*
        remove html tags
        */
     fn remove_tags(raw_content: &str) -> String {
-        println!("{}", raw_content);
         let mut lines = String::new();
-        let document = Html::parse_document(&raw_content);
+        let document = Html::parse_document(raw_content);
         let body_selector = Selector::parse("body").unwrap();
         let p_selector = Selector::parse("p").unwrap();
 
