@@ -1,12 +1,12 @@
 use crate::epub::epub::load;
 use clap::Parser;
 use crossterm::event::{Event, KeyCode};
+use indexmap::IndexMap;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
-use std::collections::HashMap;
 use std::path::Path;
 mod app;
 mod epub;
@@ -20,7 +20,8 @@ enum Focus {
     Content,
 }
 struct AppState {
-    epub_file: HashMap<String, Vec<String>>,
+    title: String,
+    epub_file: IndexMap<String, Vec<String>>,
     keys: Vec<String>,
     selected_index: usize,
     scroll: u16,
@@ -36,15 +37,17 @@ fn main() -> color_eyre::Result<()> {
 
 fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let path = Path::new(
-        "/home/duc/Documents/epubs/Nữ Thần Tượng Nhà Bên Trót Phải Lòng Cơm Tôi Nấu_VN.epub",
+        "/home/duc/Documents/epubs/Too Many Losing Heroines! Volum - Takibi Amamori (Yu Sen takibi).epub",
     );
     let epub_file = load(path);
-    let keys: Vec<String> = epub_file.keys().cloned().collect();
+    let epub_file_content = epub_file.content;
+    let keys: Vec<String> = epub_file_content.keys().cloned().collect();
     let mut list_state = ListState::default();
     list_state.select(Some(0));
 
     let mut state = AppState {
-        epub_file,
+        title: epub_file.title,
+        epub_file: epub_file_content,
         keys,
         selected_index: 0,
         scroll: 0,
@@ -117,7 +120,7 @@ fn render(frame: &mut Frame, state: &mut AppState) {
     /* render content */
     let content_block = Block::new()
         .borders(Borders::ALL)
-        .title("Title")
+        .title(state.title.clone())
         .border_style(match state.focus {
             Focus::Content => Style::default().fg(Color::Yellow),
             Focus::Toc => Style::default(),

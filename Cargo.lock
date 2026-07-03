@@ -2647,6 +2647,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "crossterm",
+ "indexmap",
  "quick-xml",
  "ratatui",
  "scraper",

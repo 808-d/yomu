@@ -1,11 +1,16 @@
+use indexmap::IndexMap;
 use serde::Deserialize;
+use std::collections::HashMap;
+pub struct EpubFile {
+    pub title: String,
+    pub content: IndexMap<String, Vec<String>>,
+}
 /*
  * table contet
  * */
 
 #[derive(Deserialize, Debug)]
 struct Toc {
-    #[serde(rename = "head")]
     head: Head,
     #[serde(rename = "docTitle")]
     doc_title: DocTitle,
@@ -15,7 +20,6 @@ struct Toc {
 
 #[derive(Deserialize, Debug)]
 struct Head {
-    #[serde(rename = "meta")]
     meta: Vec<Meta>,
 }
 
@@ -66,8 +70,24 @@ struct Content {
 /* content.opf */
 #[derive(Deserialize, Debug)]
 struct Package {
+    metadata: Metadata,
     manifest: Manifest,
     spine: Spine,
+}
+
+#[derive(Deserialize, Debug)]
+struct Metadata {
+    title: String,
+    language: String,
+    creator: Option<DcCreator>,
+    publisher: Option<String>,
+    date: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct DcCreator {
+    #[serde(rename = "$text")]
+    text: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -121,11 +141,13 @@ struct RootFile {
 
 pub mod epub {
     use crate::epub::Container;
+    use crate::epub::EpubFile;
     use crate::epub::ManifestItem;
     use crate::epub::NavMap;
     use crate::epub::Package;
     use crate::epub::Toc;
     use clap::error::Result;
+    use indexmap::IndexMap;
     use scraper::Html;
     use scraper::Selector;
     use std::collections::HashMap;
@@ -134,9 +156,8 @@ pub mod epub {
     use std::path::Path;
     use zip::ZipArchive;
 
-    pub fn load(path: &Path) -> HashMap<String, Vec<String>> {
+    pub fn load(path: &Path) -> EpubFile {
         let files_map = import_data(path);
-        // println!("{:?}", files_map.keys());
         let container_file = files_map
             .get("META-INF/container.xml")
             .expect("container.xml not found");
@@ -144,24 +165,24 @@ pub mod epub {
         let container = get_container(container_file).expect("container not found");
         /* get root file */
         let root_file = container.rootfiles.rootfile.full_path;
-
-        let opf_file = files_map.get(&root_file).expect("content.opf not found");
-
         let base_dir = root_file.rfind('/').map(|i| &root_file[..=i]).unwrap_or("");
+        /* get opf file */
+        let opf_file_str = files_map.get(&root_file).expect("content.opf not found");
+        let opf_file = get_opf_file(opf_file_str).expect("erorr when parse opf file");
+        /* get table of content file */
         let toc_key = format!("{}toc.ncx", base_dir);
         let toc_ncx = files_map.get(&toc_key).expect("toc.ncx not found");
 
+        let title = opf_file.metadata.title;
         let nav_map = define_structure(toc_ncx).expect("nav map not found!");
         // some time toc.ncx does not sync with content.opf
-        let chapters = define_chapters(opf_file).expect("chapters not found!");
-
+        let chapters = opf_file.manifest.items;
         let extracted_content = merge(base_dir, nav_map, chapters, &files_map);
-        return extracted_content;
-    }
 
-    fn define_chapters(content_opf: &str) -> Result<Vec<ManifestItem>, quick_xml::DeError> {
-        let package: Package = quick_xml::de::from_str(content_opf)?;
-        Ok(package.manifest.items)
+        return EpubFile {
+            title: title,
+            content: extracted_content,
+        };
     }
 
     fn get_container(container_file: &str) -> Result<Container, quick_xml::DeError> {
@@ -169,9 +190,12 @@ pub mod epub {
         Ok(container)
     }
 
-    /*
-     * Import the epub content into object
-     */
+    fn get_opf_file(opf_file_str: &str) -> Result<Package, quick_xml::DeError> {
+        let package: Package = quick_xml::de::from_str(opf_file_str)?;
+        Ok(package)
+    } /*
+       * Import the epub content into object
+       */
     fn import_data(path: &Path) -> HashMap<String, String> {
         let zip_file = std::fs::File::open(path).unwrap();
         let mut archive = ZipArchive::new(zip_file).unwrap();
@@ -203,9 +227,10 @@ pub mod epub {
         table_of_content: NavMap,
         chapters: Vec<ManifestItem>,
         files_map: &HashMap<String, String>,
-    ) -> HashMap<String, Vec<String>> {
-        let mut result = HashMap::new();
+    ) -> IndexMap<String, Vec<String>> {
+        let mut result = IndexMap::new();
         let is_equal = chapters.len() == table_of_content.nav_points.len();
+
         if is_equal {
             for nav_point in table_of_content.nav_points {
                 if let Some(file_content) =
@@ -253,7 +278,7 @@ pub mod epub {
         let mut lines = Vec::new();
         let document = Html::parse_document(raw_content);
         let body_selector = Selector::parse("body").unwrap();
-        let p_selector = Selector::parse("h1, p").unwrap();
+        let p_selector = Selector::parse("h1,h2,h3,h4,h5,h6,img,p").unwrap();
         if let Some(body) = document.select(&body_selector).next() {
             for el in body.select(&p_selector) {
                 let text = el.text().collect::<String>().trim().to_string();
