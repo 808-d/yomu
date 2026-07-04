@@ -4,7 +4,9 @@ use std::collections::HashMap;
 pub struct EpubFile {
     pub title: String,
     pub content: IndexMap<String, Vec<String>>,
+    pub images: HashMap<String, Vec<u8>>,
 }
+
 /*
  * table contet
  * */
@@ -157,32 +159,26 @@ pub mod epub {
     use zip::ZipArchive;
 
     pub fn load(path: &Path) -> EpubFile {
-        let files_map = import_data(path);
+        let (files_map, images_map) = import_data(path);
         let container_file = files_map
             .get("META-INF/container.xml")
             .expect("container.xml not found");
-
         let container = get_container(container_file).expect("container not found");
-        /* get root file */
         let root_file = container.rootfiles.rootfile.full_path;
         let base_dir = root_file.rfind('/').map(|i| &root_file[..=i]).unwrap_or("");
-        /* get opf file */
         let opf_file_str = files_map.get(&root_file).expect("content.opf not found");
-        let opf_file = get_opf_file(opf_file_str).expect("erorr when parse opf file");
-        /* get table of content file */
+        let opf_file = get_opf_file(opf_file_str).expect("error when parse opf file");
         let toc_key = format!("{}toc.ncx", base_dir);
         let toc_ncx = files_map.get(&toc_key).expect("toc.ncx not found");
-
         let title = opf_file.metadata.title;
         let nav_map = define_structure(toc_ncx).expect("nav map not found!");
-        // some time toc.ncx does not sync with content.opf
         let chapters = opf_file.manifest.items;
         let extracted_content = merge(base_dir, nav_map, chapters, &files_map);
-
-        return EpubFile {
-            title: title,
+        EpubFile {
+            title,
             content: extracted_content,
-        };
+            images: images_map,
+        }
     }
 
     fn get_container(container_file: &str) -> Result<Container, quick_xml::DeError> {
@@ -196,21 +192,32 @@ pub mod epub {
     } /*
        * Import the epub content into object
        */
-    fn import_data(path: &Path) -> HashMap<String, String> {
+    fn import_data(path: &Path) -> (HashMap<String, String>, HashMap<String, Vec<u8>>) {
         let zip_file = std::fs::File::open(path).unwrap();
         let mut archive = ZipArchive::new(zip_file).unwrap();
         let mut files_map = HashMap::<String, String>::new();
+        let mut images_map = HashMap::<String, Vec<u8>>::new();
+
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).unwrap();
-            // check if its directory, or its a css file
             if file.is_dir() {
                 continue;
             }
+            let name = file.name().to_string();
+
+            if name.ends_with(".jpg") || name.ends_with(".png") || name.ends_with(".jpeg") {
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).unwrap();
+                images_map.insert(name, bytes);
+                continue;
+            }
+
             let mut content = String::with_capacity(file.size() as usize);
             let _ = file.read_to_string(&mut content);
-            files_map.insert(file.name().to_string(), content);
+            files_map.insert(name, content);
         }
-        files_map
+
+        (files_map, images_map)
     }
 
     fn define_structure(toc: &str) -> Result<NavMap, quick_xml::DeError> {
@@ -236,7 +243,10 @@ pub mod epub {
                 if let Some(file_content) =
                     files_map.get(&format!("{}{}", base_dir, nav_point.content.src))
                 {
-                    result.insert(nav_point.nav_label.text, remove_tags(file_content));
+                    result.insert(
+                        nav_point.nav_label.text,
+                        remove_tags(base_dir, file_content),
+                    );
                 }
             }
         } else {
@@ -251,7 +261,7 @@ pub mod epub {
                 if let Some(file_content) =
                     files_map.get(&format!("{}{}", base_dir, nav_point.content.src))
                 {
-                    let cleaned = remove_tags(file_content);
+                    let cleaned = remove_tags(base_dir, file_content);
                     result.insert(nav_point.nav_label.text.clone(), cleaned);
                 }
             }
@@ -262,7 +272,7 @@ pub mod epub {
                     && !toc_srcs.contains(chapter.href.as_str())
                 {
                     if let Some(file_content) = files_map.get(&chapter.href) {
-                        result.insert(chapter.href, remove_tags(file_content));
+                        result.insert(chapter.href, remove_tags(base_dir, file_content));
                     }
                 }
             }
@@ -274,16 +284,25 @@ pub mod epub {
     /*
        remove html tags
        */
-    fn remove_tags(raw_content: &str) -> Vec<String> {
+    fn remove_tags(base_dir: &str, raw_content: &str) -> Vec<String> {
         let mut lines = Vec::new();
         let document = Html::parse_document(raw_content);
         let body_selector = Selector::parse("body").unwrap();
-        let p_selector = Selector::parse("h1,h2,h3,h4,h5,h6,img,p").unwrap();
+        let p_selector = Selector::parse("h1,h2,h3,h4,h5,h6,p,img").unwrap();
         if let Some(body) = document.select(&body_selector).next() {
             for el in body.select(&p_selector) {
-                let text = el.text().collect::<String>().trim().to_string();
-                if !text.is_empty() {
-                    lines.push(text);
+                match el.value().name() {
+                    "img" => {
+                        let src = el.value().attr("src").unwrap_or("UNDEFINED IMAGE");
+                        let normalized = src.trim_start_matches("./").trim_start_matches("../");
+                        lines.push(format!("[image: {}{}]", base_dir, normalized));
+                    }
+                    _ => {
+                        let text = el.text().collect::<String>().trim().to_string();
+                        if !text.is_empty() {
+                            lines.push(text);
+                        }
+                    }
                 }
             }
         }
