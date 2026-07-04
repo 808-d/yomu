@@ -11,11 +11,12 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 mod app;
 mod epub;
 #[derive(Parser)]
 struct Cli {
-    file: String,
+    file: PathBuf,
 }
 
 enum Focus {
@@ -39,9 +40,8 @@ fn main() -> color_eyre::Result<()> {
 }
 
 fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-    let path = Path::new(
-        "/home/duc/Documents/epubs/Too Many Losing Heroines! Volum - Takibi Amamori (Yu Sen takibi).epub",
-    );
+    let cli = Cli::parse();
+    let path = Path::new(&cli.file);
     let epub_file = load(path);
     let epub_file_content = epub_file.content;
     let keys: Vec<String> = epub_file_content.keys().cloned().collect();
